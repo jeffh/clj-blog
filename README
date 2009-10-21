@@ -1,0 +1,6 @@
+PREREQS:
+
+ - Clojure
+ - Clojure.Contrib
+ - Compojure + Dep
+ - Postgresql-8.4-701
