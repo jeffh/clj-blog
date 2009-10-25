@@ -34,13 +34,13 @@
 (refreshable-routes!
  root-routes
  (GET "/" (views/all-posts request))
- (GET #"/(\\d{4})" (params 0));(views/all-posts request :year (params 0)))
- (GET #"/(\\d{4})/(\\d+)/:slug"
+ (GET #"/([0-9]{4})" (views/all-posts request :year (params 0)))
+ (GET #"/([0-9]{4})/([0-9]+)/:slug"
       (views/post request
 		  :year (params 0)
 		  :id (params 1)
 		  :slug (params :slug)))
- (POST #"/(\\d{4})/(\\d+)/:slug"
+ (POST #"/([0-9]{4})/([0-9]+)/:slug"
        (views/add-comment request
 			  :year (params 0)
 			  :id (params 1)
