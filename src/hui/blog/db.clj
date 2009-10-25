@@ -1,5 +1,5 @@
 (ns #^{:author "Jeff Hui"
-       :doc "Provides database connection information."}
+       :doc "Provides database functionality."}
   hui.blog.db
   (:use [clojure.contrib.ns-utils :only (immigrate)]
 	[clojure.contrib.java-utils :only (as-str)]
@@ -10,16 +10,35 @@
 ;; including other files that use or require this file.
 ;; This allows access to func & vars in other libraries
 ;; through this file.
+;;
+;; For documentation of functions provided by clojure.contrib.sql:
+;;   http://richhickey.github.com/clojure-contrib/sql-api.html
 (immigrate 'clojure.contrib.sql)
 
+;; database configuration settings use by with-connection-config
+;; TODO: we should really support MYSQL / Other databases
+;;       which basically means fixing schemas definition
 (def db-config {:classname "org.postgresql.Driver"
 		:subprotocol "postgresql"
 		:subname "blog"
 		:user "jeff"
 		:password "xuqa+Hu&aK@w&s+!+#phawadrestesec"})
 
+;; represents the tables we want in the database.
+;; these should be in create-table parameter syntax such that:
+;;   (apply create-table :key (schemas :key))
+;; would work.
 (def schemas
-     {:posts [[:id "serial" "PRIMARY KEY" "NOT NULL"]
+     {:sites [[:id "serial" "PRIMARY KEY" "NOT NULL"]
+	      [:domain "varchar(50)" "UNIQUE" "NOT NULL"]
+	      [:title "varchar(50)" "NOT NULL"]]
+      ;; many-to-many relationship between sites and users
+      :membership [[:user_id "varchar(200)" "NOT NULL"]
+		   [:site_id "integer" "NOT NULL"]
+		   [:access "integer" "DEFAULT 0" "NOT NULL"]
+		   ["PRIMARY KEY (user_id, site_id)"]]
+      :posts [[:id "serial" "PRIMARY KEY" "NOT NULL"]
+	      [:site_id "integer" "NOT NULL"]
 	      [:title "varchar(150)" "NOT NULL"]
 	      [:body "text" "NOT NULL"]
 	      [:created "timestamp with time zone"
@@ -27,10 +46,17 @@
 	      [:published "timestamp with time zone" "NULL"]]
       :users [[:openid "varchar(200)" "PRIMARY KEY" "NOT NULL"]
 	      [:email "varchar(50)"]
-	      [:name "varchar(50)"]
-	      [:is_admin "boolean" "DEFAULT false" "NOT NULL"]]
+	      [:name "varchar(50)"]]
       :settings [[:name "varchar(50)" "PRIMARY KEY" "NOT NULL"]
 		 [:value "text" "NOT NULL"]]})
+(def access
+     (with-meta
+       ;; current access flags
+       {:reader 0, :admin 9001} ; its over 9000!
+       ;; version of the access flags
+       {:version 1}))
+;; TODO: provide an upgrade route
+
 
 (defmacro with-connection-config
   "Identical to with-connection, except the db settings are already
