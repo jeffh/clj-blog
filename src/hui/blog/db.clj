@@ -58,12 +58,11 @@
 ;; TODO: provide an upgrade route
 
 
-(defmacro with-connection-config
+(defmacro with-db
   "Identical to with-connection, except the db settings are already
   provided."
   [& body]
   `(with-connection db-config ~@body))
-(defmacro wcc [& body] `(with-connection-config ~@body))
 
 (defn sql-query
   "Executes a given query with substitutional replacements of ? in the
@@ -117,6 +116,9 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;; High-level definitions
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+;; WARNING: these functions MAY BREAK if the schema changes! This is
+;;          especially true since the schema is not near-final yet. ~Jeff
 
 (defn posts
   "Gets all published posts or force fetching all posts."
