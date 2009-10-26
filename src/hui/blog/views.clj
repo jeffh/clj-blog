@@ -1,18 +1,18 @@
-(ns #^{:author "Jeff Hui"
-       :doc "Provides the uri functions for the server."}
-  hui.blog.views
-  (:use compojure))
+(ns hui.blog.views
+  "Provides core uri functions for the blog."
+  (:use compojure
+	[hui.blog.utils :only (absolute-url enable-session-for)]))
 
 (defn all-posts
   [request & [year-filter]]
-  (if year-filter
-    "FILTER_BY_YEAR"
-    "Hello World!"))
+  (absolute-url request (request :uri) "openid" "/start"))
 
 (defn post
   [request & args]
-  "HI")
+  "GET_POST")
 
 (defn add-comment
   [request & args]
   "ADDING_COMMENT")
+
+(enable-session-for all-posts post add-comment)
