@@ -1,7 +1,7 @@
-(ns
-    #^{:author "Jeff Hui"
-       :doc "Provides the server control functions."}
-  hui.blog.server
+(ns hui.blog.server
+  "Provides server control functions. No core part of the blog app should
+  load this code unless it is a higher-level than this (eg - server
+  management"
   (:use
    [hui.blog.routes :only (root-routes)]
    compojure))

@@ -1,7 +1,5 @@
-(ns
-    #^{:author "Jeff Hui"
-       :doc "Provides url mappings for the server."}
-  hui.blog.routes
+(ns hui.blog.routes
+  "Maps URIs to specific functions for the server."
   (:require [hui.blog.views :as views])
   (:use compojure))
 

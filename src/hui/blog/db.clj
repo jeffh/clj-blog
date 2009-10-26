@@ -1,6 +1,5 @@
-(ns #^{:author "Jeff Hui"
-       :doc "Provides database functionality."}
-  hui.blog.db
+(ns hui.blog.db
+  "Provides database functionality for the blog."
   (:use [clojure.contrib.ns-utils :only (immigrate)]
 	[clojure.contrib.java-utils :only (as-str)]
 	[clojure.contrib.str-utils :only (str-join)]
@@ -44,9 +43,10 @@
 	      [:created "timestamp with time zone"
 	       "DEFAULT current_timestamp" "NOT NULL"]
 	      [:published "timestamp with time zone" "NULL"]]
-      :users [[:openid "varchar(200)" "PRIMARY KEY" "NOT NULL"]
-	      [:email "varchar(50)"]
-	      [:name "varchar(50)"]]
+      :users [[:id "serial" "PRIMARY KEY" "NOT NULL"]
+	      [:openid "varchar(200)" "UNIQUE" "NOT NULL"]
+	      [:email "varchar(50)" "DEFAULT \"\"" "NOT NULL"]
+	      [:name "varchar(50)" "DEFAULT \"\"" "NOT NULL"]]
       :settings [[:name "varchar(50)" "PRIMARY KEY" "NOT NULL"]
 		 [:value "text" "NOT NULL"]]})
 (def access
@@ -136,7 +136,7 @@
   ([id] (cond
 	 (map? id) (insert-records :posts id)
 	 true (sql-query "select * from posts where id=?" id)))
-  ([id record] (update-or-insert-values :posts ["id=?" id] params)))
+  ([id record] (update-or-insert-values :posts ["id=?" id] record)))
 
 (defn user
   "Gets/Sets a user by openid. Inserts a new row if the id happens to
@@ -145,7 +145,7 @@
 	 (map? id) (insert-records :users id)
 	 true (sql-query "select * from users where openid=?" id)))
   ([id record] (update-or-insert-values
-		:users ["openid=?" id] params)))
+		:users ["openid=?" id] record)))
 
 (defn settings
   "Gets all settings."
