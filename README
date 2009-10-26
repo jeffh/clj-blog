@@ -1,6 +1,6 @@
-PREREQS:
+You're really better off reading it online:
 
- - Clojure
- - Clojure.Contrib
- - Compojure + Dep
- - Postgresql-8.4-701
+http://wiki.github.com/jeffh/clj-blog
+
+Thanks,
+Jeff
