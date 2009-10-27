@@ -33,4 +33,5 @@
 (defmacro enable-session-for
   "Enables session support for the given functions."
   [& funcs]
-  `(decorate-with (with-session {:type :cookie, :expires 600}) ~@funcs))
+  `(decorate-with (fn [x#] (with-session x# {:type :cookie, :expires 600}))
+		  ~@funcs))

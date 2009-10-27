@@ -1,6 +1,8 @@
 (ns hui.blog.routes
   "Maps URIs to specific functions for the server."
-  (:require [hui.blog.views :as views])
+  (:require [hui.blog.views :as views]
+	    [hui.blog.openid :as openid]
+	    [hui.blog.utils :as utils])
   (:use compojure))
 
 ;; provides abstraction between the url and internal links
@@ -31,15 +33,26 @@
 ;; the routes to be updated on :reload-all
 (refreshable-routes!
  root-routes
+ (GET "/favicon.ico" (page-not-found))
+; (ANY "/*" (openid/openid-routes request))
  (GET "/" (views/all-posts request))
- (GET #"/([0-9]{4})" (views/all-posts request :year (params 0)))
- (GET #"/([0-9]{4})/([0-9]+)/:slug"
+ (GET #"/([0-9]{4})/" (views/all-posts request :year (params 0)))
+ (GET #"/([0-9]{4})/([0-9]+)/:slug/"
       (views/post request
 		  :year (params 0)
 		  :id (params 1)
 		  :slug (params :slug)))
- (POST #"/([0-9]{4})/([0-9]+)/:slug"
+ (POST #"/([0-9]{4})/([0-9]+)/:slug/"
        (views/add-comment request
 			  :year (params 0)
 			  :id (params 1)
-			  :slug (params :slug))))
+			  :slug (params :slug)))
+ (ANY "/openid/redirect/" (openid/begin-openid request
+					      :redirect-to "/openid/auth"))
+ (GET "/openid/auth/" (openid/end-openid request :redirect-to "/"))
+ (GET "/*" (views/auto-append-slash request)))
+
+
+(dosync
+ (ref-set root-routes (with-session @root-routes
+			{:type :memory, :expires 600})))
