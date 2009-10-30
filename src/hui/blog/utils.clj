@@ -29,9 +29,3 @@
 	      (if (= (:server-port request) 80) -1 (:server-port request))
 	      "/"))
    relative-url-fragments))
-
-(defmacro enable-session-for
-  "Enables session support for the given functions."
-  [& funcs]
-  `(decorate-with (fn [x#] (with-session x# {:type :cookie, :expires 600}))
-		  ~@funcs))

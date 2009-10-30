@@ -1,7 +1,7 @@
 (ns hui.blog.views
   "Provides core uri functions for the blog."
   (:use compojure
-	[hui.blog.utils :only (absolute-url enable-session-for)]))
+	[hui.blog.utils :only (absolute-url)]))
 
 (defn auto-append-slash
   [request]

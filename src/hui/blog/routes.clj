@@ -33,6 +33,8 @@
 ;; the routes to be updated on :reload-all
 (refreshable-routes!
  root-routes
+ ;; REMEMBER to append the slash at the end of the route where
+ ;; appropriate. This is utilized for
  (GET "/favicon.ico" (page-not-found))
 ; (ANY "/*" (openid/openid-routes request))
  (GET "/" (views/all-posts request))
@@ -50,7 +52,8 @@
  (ANY "/openid/redirect/" (openid/begin-openid request
 					      :redirect-to "/openid/auth"))
  (GET "/openid/auth/" (openid/end-openid request :redirect-to "/"))
- (GET "/*" (views/auto-append-slash request)))
+ (GET "/*" (views/auto-append-slash request))
+ (GET "/*" (page-not-found)))
 
 
 (dosync
