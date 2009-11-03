@@ -21,6 +21,7 @@
 (def default-filters 
      {GzipFilter "/*"})
 
+(declare add-filter!)
 (defn- init-server
   "Returns an instanciated server object."
   [_ & [options [routes]]]

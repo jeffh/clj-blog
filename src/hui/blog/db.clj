@@ -2,7 +2,7 @@
   "Provides database functionality for the blog."
   (:use [clojure.contrib.ns-utils :only (immigrate)]
 	[clojure.contrib.java-utils :only (as-str)]
-	[clojure.contrib.str-utils :only (str-join)]
+	[clojure.contrib.str-utils :only (str-join chop)]
 	compojure))
 
 ;; imports all vars as local vars to this namespace,
@@ -30,7 +30,8 @@
 (def schemas
      {:sites [[:id "serial" "PRIMARY KEY" "NOT NULL"]
 	      [:domain "varchar(50)" "UNIQUE" "NOT NULL"]
-	      [:title "varchar(50)" "NOT NULL"]]
+	      [:title "varchar(50)" "NOT NULL"]
+	      [:theme "varchar(50)" "DEFAULT 'default'" "NOT NULL"]]
       ;; many-to-many relationship between sites and users
       :membership [[:user_id "varchar(200)" "NOT NULL"]
 		   [:site_id "integer" "NOT NULL"]
@@ -43,19 +44,15 @@
 	      [:created "timestamp with time zone"
 	       "DEFAULT current_timestamp" "NOT NULL"]
 	      [:published "timestamp with time zone" "NULL"]]
+      ;; in reality, the only real users are admins
       :users [[:id "serial" "PRIMARY KEY" "NOT NULL"]
 	      [:openid "varchar(200)" "UNIQUE" "NOT NULL"]
-	      [:email "varchar(50)" "DEFAULT \"\"" "NOT NULL"]
-	      [:name "varchar(50)" "DEFAULT \"\"" "NOT NULL"]]
-      :settings [[:name "varchar(50)" "PRIMARY KEY" "NOT NULL"]
-		 [:value "text" "NOT NULL"]]})
+	      [:email "varchar(50)" "DEFAULT ''" "NOT NULL"]
+	      [:name "varchar(50)" "DEFAULT ''" "NOT NULL"]
+	      [:about "text" "DEFAULT ''" "NOT NULL"]]})
 (def access
-     (with-meta
-       ;; current access flags
-       {:reader 0, :admin 9001} ; its over 9000!
-       ;; version of the access flags
-       {:version 1}))
-;; TODO: provide an upgrade route
+     {:reader 0
+      :admin 9001}) ; its over 9000!
 
 
 (defmacro with-db
@@ -69,21 +66,32 @@
   query string."
   [query & substitutions]
   (with-query-results results
-    (into [query] substitutions)
+    (into [query] (map as-str substitutions))
     (into [] results)))
 
-(defn get-tables
-  "Queries all the tables in the database."
+(defn get-metadata
+  "Queries all the tables in the database for metadata."
   []
   (into [] (resultset-seq
 	    (-> (connection)
 		(.getMetaData)
 		(.getTables nil nil nil (into-array ["TABLE" "VIEW"]))))))
 
+(defn valid-connection?
+  "Tests to see if the database config settings are valid."
+  []
+  (try
+   (with-db (get-metadata)) true
+   (catch Exception _ false)))
+
+(defn get-tables
+  "Lists all the table names."
+  [] (map #(% :table_name) (filter #(% :table_name) (get-metadata))))
+
 (defn table-exists?
-  "Checks if the given table name exists."
+  "Checks if the given table name exists. Keywords converts to strings."
   [name]
-  (some #(= (% :table_name) (as-str name)) (get-tables)))
+  (some #{(as-str name)} (get-tables)))
 
 (defn create-table-if-not-exists
   "Identical to create-table, but ensures the table doesn't exist before
@@ -113,8 +121,67 @@
   [tables]
   (transaction (apply drop-table-if-exists (keys tables))))
 
+(defn kwd-query
+  "Converts a list of keywords to strings. Good for queries."
+  [& args]
+  (apply as-str (interleave args (repeat " "))))
+
+(defn find-or-insert
+  "Finds for a given condition in a table. If no rows are returned, then
+  insert-record map is used to create a new record; then the condition
+  is re-performed and returned. If insert-record is nil, the query results
+  are simply returned with no insert-records operation."
+  [table select-cond-and-replacements & [insert-record]]
+  (let [query (kwd-query "select * from" table :where
+		   (first select-cond-and-replacements))
+	r (apply sql-query query
+		 (rest select-cond-and-replacements))]
+    (if (and (empty? r) (not insert-record))
+      (do (insert-records table insert-record)
+	  (sql-query query))
+      r)))
+
+(defn table-association
+  "Returns the table name if in <table-name>_id format from a field.
+  Returns nil otherwise."
+  [field]
+  (if (.endsWith (as-str field) "_id")
+    ((apply comp (repeat 3 chop)) (as-str field))))
+
+(defn table-association?
+  "Determines if the given field is a table association or not."
+  [field]
+  (not (nil? (table-association field))))
+
+(defn get-by-id
+  "Gets the first row in a table filtered by an id."
+  [table id]
+  (first (sql-query (kwd-query "select * from" table :where "id=?") id)))
+
+(defn get-field
+  "Returns a delayed function call to a relationship or simply returns
+  the field value."
+  [field value]
+  (if (table-association? field)
+    (delay (get-by-id (table-association field) value))
+    value))
+
+(defn lazy-relationships
+  "Takes a query result and filters all fields ending in '_id' as a hint
+  to association to: <table-name>_id."
+  [record]
+  (apply hash-map
+	 (interleave (keys record)
+		     (map get-field (keys record) (vals record)))))
+
+(defn map-by
+  "Converts a resultset into a hash map with field as the key with the
+  row's map as its value."
+  [field results]
+  (apply hash-map (interleave (map #(% field) results) results)))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;; High-level definitions
+;; High-level definitions: Functions pertaining to the schemas
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; WARNING: these functions MAY BREAK if the schema changes! This is
@@ -153,7 +220,22 @@
 (defn setting
   "Gets/Sets a setting by name. If settings the given name doesn't
   exist, the value is created."
-  ([name] (sql-query "select * from settings where name=?" name))
+  ([name]
+     ((first
+       (sql-query "select * from settings where name=?" name))
+      :value))
   ([name val] (update-or-insert-values
 	       :settings ["name=?" (as-str name)]
 	       {:name (as-str name) :value (as-str val)})))
+
+(defn sites
+  "Gets all sites available in the database."
+  [] (sql-query "select * from sites"))
+(defn sites-map [] (map-by :id (sites)))
+;; cache by the app server for performance reasons
+;; reload-sites! is used to force reload
+(def *sites* (ref (with-db (sites-map))))
+
+(defn reload-sites!
+  "Reloads the sites information from the database."
+  [] (dosync (with-db (ref-set sites-cache (sites-map)))))
