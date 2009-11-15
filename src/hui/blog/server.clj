@@ -8,7 +8,8 @@
   (:import org.mortbay.jetty.servlet.Context
 	   org.mortbay.jetty.servlet.FilterHolder
 	   org.mortbay.jetty.Handler
-	   org.mortbay.servlet.GzipFilter))
+	   org.mortbay.servlet.GzipFilter
+	   java.io.File))
 
 ;(run-server {:port 8080} "/*" (servlet webservice))
 
@@ -20,6 +21,38 @@
 ;; the uri for the filter to apply to
 (def default-filters 
      {GzipFilter "/*"})
+
+(def file-watch-list
+     (map #(str "hui/blog/" %)
+	  ["views.clj" "db.clj" "routes.clj" "openid.clj"]))
+(def *file-watcher* (agent nil))
+
+(defn last-modified
+  "Gets the last modified time as long."
+  [filepath]
+  (.lastModified (File. filepath)))
+
+(defn reload-old
+  "Watches a set of files and reloads them automatically if changed."
+  [recorded-times file-list]
+  (if (nil? recorded-times)
+    (apply hash-map
+	   (interleave file-list
+		       (map last-modified file-list)))
+    (let [new-times (watch nil file-list)]
+      (doseq [[filename old-time] (seq recorded-times)]
+	(if (not= (- (new-times filename) old-time) 0)
+	  (do (println (str "Reloaded: " filename)) (load-file filename))))
+      new-times)))
+(defn watch-files
+  [old-file-times file-list]
+  (if (not= old-file-times :stop)
+    (do
+      (send-off *agent* #'watch-files file-list)
+      (let [r (reload-old old-file-times file-list)]
+	(Thread/sleep 2000)
+	r))
+    old-file-times))
 
 (declare add-filter!)
 (defn- init-server
@@ -52,13 +85,17 @@
   "Starts the Jetty Server asynchonously."
   [& [options [routes]]]
   (clear-agent-errors *server*)
-  (send-off *server* init-server options routes))
+  (send-off *server* init-server options routes)
+  (send-off *file-watcher* watch-files file-watch-list))
+
 
 (defn stop-server
   "Stops the Jetty Server asynchonously."
-  [] (if @*server*
-       (send-off *server* #(do (stop %) (println "Server terminated.\n") nil))
-       (throw (IllegalArgumentException. "No server initialized!"))))
+  []
+  (if @*server*
+    (send-off *server* #(do (stop %) (println "Server terminated.\n") nil))
+    (throw (IllegalArgumentException. "No server initialized!")))
+  (send-off *file-watcher* (fn [& _] :stop)))
 
 (defn append-routes
   "Updates the Jetty Server with new routes."
