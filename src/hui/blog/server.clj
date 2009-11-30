@@ -1,15 +1,15 @@
 (ns hui.blog.server
   "Provides server control functions. No core part of the blog app should
   load this code unless it is a higher-level than this (eg - server
-  management"
+  management)."
   (:use compojure
 	[compojure.server.common :only (get-host-and-path)]
-	[hui.blog.routes :only (root-routes)])
+	[hui.blog.routes :only (root-routes)]
+	hui.blog.reloader)
   (:import org.mortbay.jetty.servlet.Context
 	   org.mortbay.jetty.servlet.FilterHolder
 	   org.mortbay.jetty.Handler
-	   org.mortbay.servlet.GzipFilter
-	   java.io.File))
+	   org.mortbay.servlet.GzipFilter))
 
 ;(run-server {:port 8080} "/*" (servlet webservice))
 
@@ -23,36 +23,8 @@
      {GzipFilter "/*"})
 
 (def file-watch-list
-     (map #(str "hui/blog/" %)
-	  ["views.clj" "db.clj" "routes.clj" "openid.clj"]))
+     (filter #(.endsWith % ".clj") (get-files "hui/blog")))
 (def *file-watcher* (agent nil))
-
-(defn last-modified
-  "Gets the last modified time as long."
-  [filepath]
-  (.lastModified (File. filepath)))
-
-(defn reload-old
-  "Watches a set of files and reloads them automatically if changed."
-  [recorded-times file-list]
-  (if (nil? recorded-times)
-    (apply hash-map
-	   (interleave file-list
-		       (map last-modified file-list)))
-    (let [new-times (watch nil file-list)]
-      (doseq [[filename old-time] (seq recorded-times)]
-	(if (not= (- (new-times filename) old-time) 0)
-	  (do (println (str "Reloaded: " filename)) (load-file filename))))
-      new-times)))
-(defn watch-files
-  [old-file-times file-list]
-  (if (not= old-file-times :stop)
-    (do
-      (send-off *agent* #'watch-files file-list)
-      (let [r (reload-old old-file-times file-list)]
-	(Thread/sleep 2000)
-	r))
-    old-file-times))
 
 (declare add-filter!)
 (defn- init-server
@@ -86,7 +58,8 @@
   [& [options [routes]]]
   (clear-agent-errors *server*)
   (send-off *server* init-server options routes)
-  (send-off *file-watcher* watch-files file-watch-list))
+  (send-off *file-watcher* start-watching-files file-watch-list)
+  nil)
 
 
 (defn stop-server
@@ -95,7 +68,8 @@
   (if @*server*
     (send-off *server* #(do (stop %) (println "Server terminated.\n") nil))
     (throw (IllegalArgumentException. "No server initialized!")))
-  (send-off *file-watcher* (fn [& _] :stop)))
+  (send-off *file-watcher* stop-watching-files)
+  nil)
 
 (defn append-routes
   "Updates the Jetty Server with new routes."

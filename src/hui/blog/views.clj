@@ -16,14 +16,10 @@
 (defn all-posts
   [request & [year-filter]]
   (with-request-bindings request
-    (if (session :openid)
-      (str "Hello, " (session :openid) "!")
-      (str request))))
-;    [(if (params :test)
-;       (session-assoc :test (params :test)))
-;     (if (session :test)
-;       (str (session :test) "<br>" (absolute-url request))
-;       (str "(session :test) not set<br/>" params))]))
+    (str "HI " (request :server-name))))
+;    (if (session :openid)
+;      (str "Hello, " (session :openid) "!")
+;      (str request))))
 
 (defn post
   [request & args]
