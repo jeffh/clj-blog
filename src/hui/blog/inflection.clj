@@ -1,6 +1,9 @@
 (ns hui.blog.inflection
   "Enables english-based inflection capabilities such as pluralization."
-  (:use hui.blog.utils))
+  (:use [hui.blog.utils :only (isUpperCase? re-compile)]
+	[clojure.contrib.str-utils :only (re-gsub re-partition)]
+	[clojure.contrib.except :only (throw-arg)]
+	clojure.test))
 
 ;; words that can't be pluralized: eg - money
 (def uncountable-words (ref #{}))

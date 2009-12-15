@@ -2,8 +2,7 @@
   "Provides utility functions. All functions in this namespace are pure."
   (:use compojure
 	[clojure.contrib.java-utils :only (as-str)]
-	[clojure.contrib.str-utils :only (re-split re-partition)]
-	[clojure.contrib.except :only (throw-arg)]
+	[clojure.contrib.str-utils :only (re-split re-gsub)]
 	clojure.test)
   (:import java.net.URL
 	   java.util.regex.Pattern))

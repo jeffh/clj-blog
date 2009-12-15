@@ -4,16 +4,53 @@
 	[clojure.contrib.str-utils :only (str-join chop re-split re-gsub)]
 	clojure.contrib.sql
 	clojure.test
-	hui.blog.utils :only (pluralize)))
+	[hui.blog.inflection :only (pluralize)]))
+
+(defn- build-subname
+  "Builds a subname from the db-config"
+  [x] (as-str (x :host) ":" (x :port) "/" (x :database)))
+
+;; TODO: these drivers don't provide SQL abstraction.
+;; REFERENCE: http://troels.arvin.dk/db/rdbms/
+(defonce db-drivers
+  {:postgres {:class "org.postgresql.Driver"
+	      :subprotocol "postgresql"
+	      :subname #(str "//" (build-subname %))
+	      :port 5432}
+   ;; UNSUPPORTED DRIVERS (for now)
+   :mysql {:class "com.mysql.jdbc.Driver"
+	   :subprotocol "mysql"
+	   :subname #(str "//" (build-subname %))
+	   :port 3306}
+   :oracle {:class "oracle.jdbc.driver.OracleDriver"
+	    :subprotocol "oracle:thin"
+	    :subname #(str "@//" (build-subname %))
+	    :port 1521}})
 
 ;; database configuration settings use by with-connection-config
 ;; TODO: we should really support MYSQL / Other databases
 ;;       which basically means fixing schemas definition
-(defonce db-config {:classname "org.postgresql.Driver"
-		    :subprotocol "postgresql"
-		    :subname "blog"
-		    :user "jeff"
-		    :password "xuqa+Hu&aK@w&s+!+#phawadrestesec"})
+(defonce db-config-default
+  {:driver :postgres
+   :host "localhost"
+   :database "clj-database"
+   :user "user"
+   :password "password"})
+(defonce db-config (ref {}))
+;; builds a database configuration using db-drivers and db-config
+(defn build-db-config
+  "Returns the map the pass to with-connection. Utilizes db-drivers and
+  db-config to build this hash-map."
+  ([] (build-db-config db-config-default @db-config))
+  ([config & more-configs]
+     (let [driver (db-drivers :postgres)
+	   config (apply merge {:port (driver :port)} config more-configs)]
+       {:classname (driver :class)
+	:subprotocol (driver :subprotocol)
+	:subname ((driver :subname) config)
+	:user (config :user)
+	:password (config :password)})))
+
 (defonce *print-queries* true) ;; if true, prints executed queries to *out*
 
 (defmacro with-db
@@ -22,7 +59,7 @@
   [& body]
   `(if (find-connection)
      (do ~@body)
-     (with-connection db-config ~@body)))
+     (with-connection (build-db-config) ~@body)))
 
 (defn str-query
   "Converts a query to string, using as-str."
@@ -92,9 +129,14 @@
 (defn query-substitution
   "Used for printing sql-queries. This isn't used in sql-query directly, but
   is a good approximation."
+  {:test (fn []
+	   (are [x y z] (= x (query-substitution y z))
+		"testing 'testing'" "testing ?" ["testing"]
+		"testing '\\'testing\\''" "testing ?" ["'testing'"]))}
   [query substitutions]
   (let [query-partials (re-split #"\?" (str query))
-	subs (map #(str "'" (re-gsub #"'" "\\\\'" (as-str %)) "'") substitutions)]
+	subs (map #(str "'" (re-gsub #"'" "\\\\'" (as-str %)) "'")
+		  substitutions)]
     (if (<= (count subs) 0)
       query
       (apply str (interleave query-partials subs)))))
@@ -119,25 +161,24 @@
 
 (defn valid-connection?
   "Tests to see if the database config settings are valid."
-  [] (try
-      (with-db (get-metadata)) true
-      (catch Exception _ false)))
+  [] (try (with-db (get-metadata)) true
+	  (catch Exception _ false)))
 
 (defn count-rows
-  "Counts the number of rows in a given table. This is done via SQL's COUNT, so
-  is faster than fetching all the rows and doing a (count) if you simply just
-  want to determine the number of rows in the table.
+  "Counts the number of rows in a given table. This is done via SQL's COUNT,
+  so is faster than fetching all the rows and doing a (count) if you simply
+  just want to determine the number of rows in the table.
 
   Like sql-query, this needs to be wrapped in a database connection.
 
-  Accepts a query-parser to modify the base query, 'select count(id) from table'.
-  Use insert-clause for easily editing the query."
+  Accepts a query-parser to modify the base query, 'select count(id) from
+  table'. Use insert-clause for easily editing the query."
   [table & [query-parser & substitutions]]
   (let [substitutions (or substitutions [])
 	query-parser (or query-parser identity)]
     (apply (comp :count first sql-query)
      ((comp query-parser str-query)
-      :select (as-str "count(" table ".id)") :from table)
+      :select (as-str "count(*)") :from table)
      substitutions)))
 
 (defn get-tables
@@ -156,51 +197,37 @@
 
 (defn create-table-if-not-exists
   "Identical to create-table, but ensures the table doesn't exist before
-  attempting to create it."
+  attempting to create it. Returns true if created and nil if not."
   [name & specs]
-  (if (not (table-exists? name))
-    (apply create-table name specs)))
+  (when (not (table-exists? name))
+    (apply create-table name specs) true))
 
 (defn drop-table-if-exists
   "Identical to drop-table, but sliently fails instead of throwing
-  an exception. Also accepts more than one table."
-  [& names]
-  ;(dorun (map #(try (drop-table %) (catch Exception _)) names)))
-  (dorun (map #(if (table-exists? %) (drop-table %)) names)))
+  an exception. Also accepts more than one table. Returns a list of booleans
+  indicating which tables were dropped (true) and which tables did not exist
+  to be droppped (nil)."
+  ([name] (when (table-exists? name) (drop-table name) true))
+  ([name another-name & names]
+     (into (map drop-table-if-exists [name another-name])
+	   (map drop-table-if-exists names))))
 
 (defn rename-table
   "Renames a table to a new name. Executes a SQL92-syntax."
   [table-name new-table-name]
-  (sql-query "alter table ? rename to ?" table-name new-table-name))
+  (do-commands (as-str "alter table " table-name " rename to " new-table-name)))
 
 (defn setup-tables
   "Takes a hashmap of sequences which correspond {key value} as
   {table-name spec}. Tables are created only if they don't already exist."
   [tables]
   (transaction
-   (dorun
-    (map (fn [[n s]] (apply create-table-if-not-exists n s)) tables))))
+   (dorun (map (fn [[n s]] (apply create-table-if-not-exists n s)) tables))))
 
 (defn teardown-tables
   "Drops tables if they exist. Accepts the same data structure setup-tables
   utilizes for convinence."
-  [tables]
-  (transaction (apply drop-table-if-exists (keys tables))))
-
-(defn find-or-insert
-  "Finds for a given condition in a table. If no rows are returned, then
-  insert-record map is used to create a new record; then the condition
-  is re-performed and returned. If insert-record is nil, the query results
-  are simply returned with no insert-records operation."
-  [table select-cond-and-replacements & [insert-record]]
-  (let [query (str-query "select * from" table :where
-		   (first select-cond-and-replacements))
-	r (apply sql-query query
-		 (rest select-cond-and-replacements))]
-    (if (and (empty? r) (not insert-record))
-      (do (insert-records table insert-record)
-	  (sql-query query))
-      r)))
+  [tables] (transaction (apply drop-table-if-exists (keys tables))))
 
 (defn table-association
   "Returns the table name if in <table-name>_id format from a field or nil
@@ -221,10 +248,33 @@
   [field]
   (not (not (table-association field))))
 
+(defn get-max-id
+  "Gets the last created row by highest primary key. PK is default to 'id'."
+  ([table] (get-max-id table "id"))
+  ([table pk-field]
+     (:max (first (sql-query (as-str "select max(" pk-field ") from " table))))))
+
+(defn insert-then-get-id
+  "Inserts a record and then immediately get-max-id to get the id of the
+  inserted record. This assumes your table has the primary key auto incremented.
+  Since inserting and selecting are part of a transaction, the entire operation
+  is atomic; meaning the id is always the inserted row's id."
+  ([table record] (insert-then-get-id table record "id"))
+  ([table record pk-field]
+     (transaction
+      (try
+       (insert-records table record) (get-max-id table pk-field)
+       (catch Exception _ (set-rollback-only))))))
+
+(defn get-by
+  "Gets all rows in a table filtered by a field."
+  [table field value]
+  (sql-query (str-query "select * from" table :where field "=?") value))
+
 (defn get-by-id
   "Gets the first row in a table filtered by an id."
-  [table id]
-  (first (sql-query (str-query "select * from" table :where "id=?") id)))
+  ([table id] (get-by-id table id :id))
+  ([table id id-field] (first (get-by table id-field id))))
 
 (defn get-field
   "Returns a delayed function call to a relationship or simply returns

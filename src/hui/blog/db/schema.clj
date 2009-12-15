@@ -30,15 +30,21 @@
 (defn latest-version
   "Gets the highest version number in the migration sequence.
   Returns 0 if there are no migrations."
-  [migrations]
-  (apply max (keys migrations)))
+  ([] (latest-version @*migrations*))
+  ([migrations]
+     (cond (= (count migrations) 0) 0
+	   (= (count migrations) 1) (first (keys migrations))
+	   :else (apply max (keys migrations)))))
 
 (defn latest-migration
-  "Gets the highest-versioned migration. Returns 0 if no versions."
-  [migrations]
-  (let [highest-ver (latest-version migrations)]
-    (first (filter #(= (latest-version migrations) (get % :version 0))
-		   migrations))))
+  "Gets the highest-versioned migration. Returns nil if no versions."
+  ([] (latest-migration @*migrations*))
+  ([migrations]
+     (if-not (= (count migrations) 0)
+       (migrations (latest-version migrations)))))
+;  (let [highest-ver (latest-version migrations)]
+;    (first (filter #(= (latest-version migrations) (get % :version 0))
+;		   migrations))))
 
 (def sql-types {:primary-key {:name "integer PRIMARY KEY"}
 		:string {:name "varchar" :limit 255}
@@ -111,7 +117,7 @@
 ;; not implemented yet
 ;(declare add-table drop-table alter-table rename-table sql-query
 ;	 rename-column drop-column add-column)
-(declare *table*)
+(def *table* nil)
 
 (defn add-table
   "Creates a table on the database."
@@ -121,13 +127,14 @@
 (defn get-current-table
   "Gets the table value if in a with-table block. Nil if otherwise."
   [] *table*)
-(defn with-table
-  "Performs operations on a given table."
-  [table-name operation-fn]
-  (binding [(get-current-table) table-name] (operation-fn)))
-(defn in-with-table?
+(defn current-table?
   "Determines if the code is in a with-table block."
-  (if (get-current-table) true false))
+  [] (if (get-current-table) true false))
+(defmacro with-table
+  "Performs operations on a given table. Access via *table* or
+  (get-current-table)."
+  [table-name & body]
+  `(binding [*table* (get-current-table)] ~@body))
 (defmacro alter-table
   "Performs a given set of operations on a table."
   [table-name & body]
@@ -139,8 +146,8 @@
   {:arglists '([table-name? field]
 	       [table-name? field-name field-type & field-properties])}
   [& args]
-  (let [table-name (if (in-with-table?) (get-current-table) (first args))
-	args (if (in-with-table?) args (rest args))
+  (let [table-name (if (current-table?) (get-current-table) (first args))
+	args (if (current-table?) args (rest args))
 	field (if (> (count args) 1)
 		(apply new-field args)
 		(first args))]
@@ -152,8 +159,8 @@
   not needed if called in a with-table block."
   {:arglists '([table-name? column-name new-column-name])}
   [& args]
-  (let [table-name (if (in-with-table?) (get-current-table) (first args))
-	args (if (in-with-table?) args (rest args))
+  (let [table-name (if (current-table?) (get-current-table) (first args))
+	args (if (current-table?) args (rest args))
 	[column-name new-column-name] args]
     (sql-query "alter table ? rename ? to ?"
 	       table-name column-name new-column-name)))
@@ -163,28 +170,24 @@
   a with-table block."
   {:arglists '([table-name? column-name])}
   [& args]
-  (let [table-name (if (in-with-table?) (get-current-table) (first args))
-	args (if (in-with-table?) args (rest args))
+  (let [table-name (if (current-table?) (get-current-table) (first args))
+	args (if (current-table?) args (rest args))
 	column-name (first args)]
     (sql-query "alter table ? drop ?"
 	       table-name column-name)))
 
 (defn register-migration
-  "Adds a migration function to this database. If down-fn? is not provided, a
-  simple function that prints a warning to *out* is used. Version is a number
-  that uniquely identifies it and when it is called in the versioning scheme.
-
-  If down-fn? is a number, then it is treated as a version number. If no
-  version is specified, then it aquires one higher than the latest version."
-  [up-fn down-fn? version?]
-  (let [version? (if version? version?
-		     (if (number? down-fn?) down-fn?))
-	version? (if version? version? (inc (latest-version *migrations*)))
-	down-fn? (if-not (number? down-fn?) down-fn?)
-	mig (if down-fn?
-	      (create-migration :up up-fn :down down-fn?)
+  "Adds a migration function to this database. If :down-fn is not provided, a
+  simple function that prints a warning to *out* is used. :version is a number
+  that uniquely identifies it and when it is called in the versioning scheme."
+  [up-fn & kwargs]
+  (let [kwargs (apply hash-map kwargs)
+	version (or (kwargs :version) (inc (latest-version @*migrations*)))
+	down-fn (kwargs :down-fn nil)
+	mig (if down-fn
+	      (create-migration :up up-fn :down down-fn)
 	      (create-migration :up up-fn))]
-    (dosync (alter *migrations* assoc version? mig))))
+    (dosync (alter *migrations* assoc version mig))))
 
 (defmacro defmigration
   "Defines a database schema migration step. Optionally accepts migration
@@ -193,8 +196,28 @@
   {:arglists '([version? up down?])}
   [& args]
   (let [version (if (number? (first args)) (first args))
-	args (if (number? (first args)) (rest args))
+	args (if (number? (first args)) (rest args) args)
 	[up down] args]
-    (register-migration (fn [] up)
-			(if down (fn [] down))
-			version)))
+    `(let [d# ~down]
+       (register-migration (fn [] ~up)
+			   :down-fn (if d# (fn [] d#))
+			   :version ~version))))
+
+(defn migrate-up
+  "Runs the given migration upgrade function."
+  [migration] ((:up migration)))
+(defn migrate-down
+  "Runs the given migration downgrade function."
+  [migration] ((:down migration)))
+
+;(defn migrate-to
+;  "Returns a sequence of functions from one migration version to another. The
+;  functions are either upgrade or downgrade functions depending on the 
+;  difference between the 2 versions."
+;  [current-version change-to-version]
+;  (let [diff (- change-to-version current-version)
+;	fn-name (if (pos? diff) :up-fn :down-fn)
+;	numbers (range current-version change-to-version
+;		       (if (neg? diff) -1 1))]
+;    (if-not (neg? diff)
+;      (filter #(
