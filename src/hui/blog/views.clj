@@ -1,7 +1,10 @@
 (ns hui.blog.views
   "Provides core uri functions for the blog."
   (:use compojure
-	[hui.blog.utils :only (absolute-url)]))
+	hui.blog.db
+	[hui.blog.utils :only (absolute-url)]
+	hui.blog.html)
+  (:import java.util.Date))
 
 (defn auto-append-slash
   [request]
@@ -14,16 +17,36 @@
 		     (dissoc params :*)))))))
 
 (defn all-posts
-  [request & [year-filter]]
+  [request & [slug]]
   (with-request-bindings request
-    (str "HI " (request :server-name))))
+    (index-page (get-site (:server-name request)) nil (get-posts :limit 10))))
 ;    (if (session :openid)
 ;      (str "Hello, " (session :openid) "!")
 ;      (str request))))
 
+(defn new-post
+  [request]
+  (let [site (get-site (:server-name request))]
+    (if site
+      (with-request-bindings request
+	(with-validated-params params post-validate
+	  (if (validation-errors?)
+	    (index-page site nil (get-posts :limit 10))
+	    (do (save-post {:site-ids [(params :target)]
+			    :title (params :title)
+			    :body (params :body)})
+	    (redirect-to "/")))))
+      (redirect-to "/new/site/"))))
+
+(defn new-site
+  [request])
+
 (defn post
-  [request & args]
-  "GET_POST")
+  [request & kwargs]
+  (let [kwargs (apply hash-map kwargs)
+	site (get-site (:server-name request))]
+    (with-request-bindings request
+      (index-page site nil (vector (get-post (:_id site) (:slug kwargs)))))))
 
 (defn add-comment
   [request & args]

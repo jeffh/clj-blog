@@ -86,3 +86,8 @@
 
 (defn restart-server
   [] (clear-agent-errors *server*) (stop-server) (start-server))
+
+(defn -main
+  []
+  (println "HTTP Server on port 8080 ...")
+  (start-server))
